@@ -7,11 +7,14 @@ import heapq
 import traceback
 import gc
 import time
+import logging
 
 import torch
 import nodes
 
 import comfy.model_management
+
+logging.basicConfig(level=logging.INFO)
 
 def get_input_data(inputs, class_def, unique_id, outputs={}, prompt={}, extra_data={}):
     valid_inputs = class_def.INPUT_TYPES()
@@ -103,6 +106,7 @@ def get_output_data(obj, input_data_all):
     return output, ui
 
 def recursive_execute(server, prompt, outputs, current_item, extra_data, executed, prompt_id, outputs_ui):
+    logging.info(f"Recursive Execute call for {prompt_id=}, {current_item=}")
     unique_id = current_item
     inputs = prompt[unique_id]['inputs']
     class_type = prompt[unique_id]['class_type']
@@ -211,6 +215,7 @@ class PromptExecutor:
         self.server = server
 
     def execute(self, prompt, prompt_id, extra_data={}, execute_outputs=[]):
+        logging.info(f"{prompt=}")
         nodes.interrupt_processing(False)
 
         if "client_id" in extra_data:

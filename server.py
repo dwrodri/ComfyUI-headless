@@ -293,40 +293,52 @@ class PromptServer():
             return web.json_response(queue_info)
 
         @routes.post("/prompt")
-        async def post_prompt(request):
-            print("got prompt")
-            resp_code = 200
-            out_string = ""
-            json_data =  await request.json()
+        async def post_remote_prompt(request):
+            try:
+                data = await request.read()
+                url = 'http://10.0.0.2:8188' + request.path_qs
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, data=data) as response:
+                        response_data = await response.text()
+                        return web.Response(text=response_data)
+            except Exception as e:
+                return web.Response(text=str(e), status=500)
 
-            if "number" in json_data:
-                number = float(json_data['number'])
-            else:
-                number = self.number
-                if "front" in json_data:
-                    if json_data['front']:
-                        number = -number
+        # @routes.post("/prompt")
+        # async def post_prompt(request):
+        #     print("got prompt")
+        #     resp_code = 200
+        #     out_string = ""
+        #     json_data =  await request.json()
 
-                self.number += 1
+        #     if "number" in json_data:
+        #         number = float(json_data['number'])
+        #     else:
+        #         number = self.number
+        #         if "front" in json_data:
+        #             if json_data['front']:
+        #                 number = -number
 
-            if "prompt" in json_data:
-                prompt = json_data["prompt"]
-                valid = execution.validate_prompt(prompt)
-                extra_data = {}
-                if "extra_data" in json_data:
-                    extra_data = json_data["extra_data"]
+        #         self.number += 1
 
-                if "client_id" in json_data:
-                    extra_data["client_id"] = json_data["client_id"]
-                if valid[0]:
-                    prompt_id = str(uuid.uuid4())
-                    self.prompt_queue.put((number, prompt_id, prompt, extra_data, valid[2]))
-                    return web.json_response({"prompt_id": prompt_id})
-                else:
-                    print("invalid prompt:", valid[1])
-                    return web.json_response({"error": valid[1]}, status=400)
-            else:
-                return web.json_response({"error": "no prompt"}, status=400)
+        #     if "prompt" in json_data:
+        #         prompt = json_data["prompt"]
+        #         valid = execution.validate_prompt(prompt)
+        #         extra_data = {}
+        #         if "extra_data" in json_data:
+        #             extra_data = json_data["extra_data"]
+
+        #         if "client_id" in json_data:
+        #             extra_data["client_id"] = json_data["client_id"]
+        #         if valid[0]:
+        #             prompt_id = str(uuid.uuid4())
+        #             self.prompt_queue.put((number, prompt_id, prompt, extra_data, valid[2]))
+        #             return web.json_response({"prompt_id": prompt_id})
+        #         else:
+        #             print("invalid prompt:", valid[1])
+        #             return web.json_response({"error": valid[1]}, status=400)
+        #     else:
+        #         return web.json_response({"error": "no prompt"}, status=400)
 
         @routes.post("/queue")
         async def post_queue(request):

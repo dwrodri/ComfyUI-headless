@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "comfyui"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+license = "GPLv3.0"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+torch = "^2.2.0"
+torchdiffeq = "^0.2.3"
+torchsde = "^0.2.6"
+einops = "^0.7.0"
+open-clip-torch = "^2.24.0"
+transformers = ">=4.25.1"
+safetensors = ">=0.3.0"
+pytorch-lightning = "^2.2.0.post0"
+aiohttp = "^3.9.3"
+accelerate = "^0.27.2"
+pyyaml = "^6.0.1"
+
+[tool.poetry.group.dev.dependencies]
+isort = "^5.13.2"
+black = "^24.2.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
