@@ -12,6 +12,63 @@ import nodes
 
 import comfy.model_management
 
+# Setup Modal Stub
+import tomllib
+from modal import Image, Stub, Volume
+import os
+
+
+VERSION_COMPARISONS = "^<>="
+package_dependencies = {}
+
+if os.path.exists("pyproject.toml"):
+    with open("pyproject.toml", "rb") as fp:
+        pyproject = tomllib.load(fp)
+        package_dependencies = {
+            package_name: "".join(
+                char for char in version if char not in VERSION_COMPARISONS
+            )
+            for package_name, version in pyproject["tool"]["poetry"][
+                "dependencies"
+            ].items()
+        }
+
+
+comfy_image = (
+    Image.debian_slim(python_version="3.11")
+    .apt_install(
+        "curl",
+        "git",
+    )
+    .run_commands(
+        "git clone https://github.com/dwrodri/comfyui-headless /comfyui/",
+        "curl -sSL https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt -o /comfyui/models/checkpoints/v1-5-pruned-emaonly.ckpt",
+        "pip install -r /comfyui/requirements.txt",
+    )
+    .workdir("/comfyui/")
+)
+
+comfy_output_volume = Volume.persisted("comfy_results")
+
+
+def move_configs():
+    print(f"moving configs from stupid hack folder: {os.path.exists('stupid_hack/')}")
+    for root, _, files in os.walk("stupid_hack/"):
+        for file in files:
+            if not os.path.exists(os.path.join("/root/comfy", file)):
+                filename = os.path.join(root, file)
+                print(f"found new {filename}")
+                shutil.copy(filename, "/root/comfy")
+
+
+with comfy_image.imports():
+    import shutil
+    import torch
+    import time
+    import hashlib
+
+stub = Stub("comfy-backend", image=comfy_image)
+
 
 def get_input_data(inputs, class_def, unique_id, outputs={}, prompt={}, extra_data={}):
     valid_inputs = class_def.INPUT_TYPES()
@@ -170,7 +227,7 @@ def recursive_execute(
         input_data_all = get_input_data(
             inputs, class_def, unique_id, outputs, prompt, extra_data
         )
-        if server.client_id is not None:
+        if server is not None and server.client_id is not None:
             server.last_node_id = unique_id
             server.send_sync(
                 "executing",
@@ -187,7 +244,7 @@ def recursive_execute(
         outputs[unique_id] = output_data
         if len(output_ui) > 0:
             outputs_ui[unique_id] = output_ui
-            if server.client_id is not None:
+            if server is not None and server.client_id is not None:
                 server.send_sync(
                     "executed",
                     {"node": unique_id, "output": output_ui, "prompt_id": prompt_id},
@@ -326,7 +383,7 @@ class ModalPromptExecutor:
 
     def add_message(self, event, data, broadcast: bool):
         self.status_messages.append((event, data))
-        if self.server.client_id is not None or broadcast:
+        if self.server is not None and self.server.client_id is not None or broadcast:
             self.server.send_sync(event, data, self.server.client_id)
 
     def handle_execution_error(
@@ -374,10 +431,11 @@ class ModalPromptExecutor:
     def execute(self, prompt, prompt_id, extra_data={}, execute_outputs=[]):
         nodes.interrupt_processing(False)
 
-        if "client_id" in extra_data:
-            self.server.client_id = extra_data["client_id"]
-        else:
-            self.server.client_id = None
+        if self.server != None:
+            if "client_id" in extra_data:
+                self.server.client_id = extra_data["client_id"]
+            else:
+                self.server.client_id = None
 
         self.status_messages = []
         self.add_message("execution_start", {"prompt_id": prompt_id}, broadcast=False)
@@ -466,7 +524,7 @@ class ModalPromptExecutor:
 
             for x in executed:
                 self.old_prompt[x] = copy.deepcopy(prompt[x])
-            self.server.last_node_id = None
+            # self.server.last_node_id = None
             if comfy.model_management.DISABLE_SMART_MEMORY:
                 comfy.model_management.unload_all_models()
 
@@ -918,3 +976,23 @@ class PromptQueue:
                 return ret
             else:
                 return self.flags.copy()
+
+
+@stub.function(gpu="T4", image=stub.image, volumes={"/results": comfy_output_volume})
+def remote_execute(queue_item):
+    e = ModalPromptExecutor(None)
+    item, item_id = queue_item
+    execution_start_time = time.perf_counter()
+    prompt_id = item[1]
+    e.execute(item[2], prompt_id, item[3], item[4])
+    current_time = time.perf_counter()
+    execution_time = current_time - execution_start_time
+    print("Prompt executed in {:.2f} seconds".format(execution_time))
+    comfy_output_volume.reload()
+    for root, _, files in os.walk("/comfyui/output"):
+        for file in files:
+            if "png" == file[-3:]:
+                print(f"copying {file} to volume")
+                shutil.copy(os.path.join(root, file), os.path.join("/results", file))
+    comfy_output_volume.commit()
+    return e.outputs_ui, e.status_messages, e.success

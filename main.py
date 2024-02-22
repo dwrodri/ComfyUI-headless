@@ -86,6 +86,7 @@ import comfy.utils
 import yaml
 
 
+import modal
 import modal_execution
 
 import execution
@@ -93,41 +94,6 @@ import server
 from server import BinaryEventTypes
 from nodes import init_custom_nodes
 import comfy.model_management
-
-# Setup Modal Stub
-import tomllib
-from modal import Image, Stub, Function
-import os
-
-
-VERSION_COMPARISONS = "^<>="
-package_dependencies = {}
-with open("pyproject.toml", "rb") as fp:
-    pyproject = tomllib.load(fp)
-    package_dependencies = {
-        package_name: "".join(
-            char for char in version if char not in VERSION_COMPARISONS
-        )
-        for package_name, version in pyproject["tool"]["poetry"]["dependencies"].items()
-    }
-
-
-stub = Stub()
-image = (
-    Image.debian_slim(python_version=package_dependencies["python"])
-    .pip_install(
-        *[
-            f"{package_name}=={version}"
-            for package_name, version in package_dependencies.items()
-            if package_name != "python"
-        ]
-    )
-    .apt_install(
-        "curl",
-        "git",
-    )
-    .copy_local_dir(os.path.join(os.getcwd(), "models/"))
-)
 
 
 def cuda_malloc_warning():
@@ -209,15 +175,16 @@ def prompt_worker(q, server):
 # like prompt_worker but launches the cloud function
 def modal_delegator(q, server):
     gc_collect_interval = 10.0
+    need_gc = False
     while True:
         timeout = 1000.0
         if need_gc:
             timeout = max(gc_collect_interval - (current_time - last_gc_collect), 0.0)
 
         queue_item = q.get(timeout=timeout)
-        cloud_func = Function.lookup(stub.name, "execute_on_modal")
+        cloud_func = modal.Function.lookup("comfy-backend", "remote_execute")
         if queue_item is not None:
-            outputs_ui, status_messages, success = cloud_func(queue_item)
+            outputs_ui, status_messages, success = cloud_func.remote(queue_item)
             q.task_done(
                 queue_item[1],
                 outputs_ui,
@@ -250,19 +217,6 @@ def modal_delegator(q, server):
                 comfy.model_management.soft_empty_cache()
                 last_gc_collect = current_time
                 need_gc = False
-
-
-@stub.function(gpu="T4", image=image)
-def execute_on_modal(queue_item):
-    e = execution.ModalPromptExecutor(None)
-    item, item_id = queue_item
-    execution_start_time = time.perf_counter()
-    prompt_id = item[1]
-    e.execute(item[2], prompt_id, item[3], item[4])
-    current_time = time.perf_counter()
-    execution_time = current_time - execution_start_time
-    print("Prompt executed in {:.2f} seconds".format(execution_time))
-    return e.outputs_ui, e.status_messages, e.success
 
 
 async def run(server, address="", port=8188, verbose=True, call_on_start=None):
@@ -349,7 +303,7 @@ if __name__ == "__main__":
     hijack_progress(server)
 
     threading.Thread(
-        target=prompt_worker,
+        target=modal_delegator,
         daemon=True,
         args=(
             q,
