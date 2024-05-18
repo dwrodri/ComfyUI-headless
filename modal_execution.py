@@ -14,7 +14,7 @@ import comfy.model_management
 
 # Setup Modal Stub
 import tomllib
-from modal import Image, Stub, Volume
+from modal import Image, App, Volume
 import os
 
 
@@ -48,7 +48,7 @@ comfy_image = (
     .workdir("/comfyui/")
 )
 
-comfy_output_volume = Volume.persisted("comfy_results")
+comfy_output_volume = Volume.from_name("comfy_results", create_if_missing=True)
 
 
 def move_configs():
@@ -67,7 +67,7 @@ with comfy_image.imports():
     import time
     import hashlib
 
-stub = Stub("comfy-backend", image=comfy_image)
+backend = App("comfy-backend", image=comfy_image)
 
 
 def get_input_data(inputs, class_def, unique_id, outputs={}, prompt={}, extra_data={}):
@@ -978,7 +978,9 @@ class PromptQueue:
                 return self.flags.copy()
 
 
-@stub.function(gpu="T4", image=stub.image, volumes={"/results": comfy_output_volume})
+@backend.function(
+    gpu="T4", image=backend.image, volumes={"/results": comfy_output_volume}
+)
 def remote_execute(queue_item):
     e = ModalPromptExecutor(None)
     item, item_id = queue_item
